@@ -1,2 +1,1 @@
-# recommender_system_from_scratch
-Neighborhood-Based CF, Model-Based CF, implemented from scratch
+# My implementation of Recommender System algorithms from scratch
