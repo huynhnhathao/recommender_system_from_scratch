@@ -1,14 +1,20 @@
 
+##################################################################
+#                    Huynh Nhat Hao                              #
+# it takes me more than 25 working hours to jut write this file! #
+##################################################################
 import logging
 import sys
 import copy
 import numpy as np
+from numpy.lib.financial import rate
 import pandas as pd
 
 log_format = '%(asctime)s %(message)s'
 logging.basicConfig(stream=sys.stdout, level=logging.INFO,
                     format=log_format, datefmt='%m/%d %I:%M:%S %p')
 logger = logging.getLogger()
+
 
 class CollaborativeFiltering(object):
     """
@@ -34,10 +40,15 @@ class CollaborativeFiltering(object):
         self.movies_data = movies_data
         # compute mean rating for each user
         self.user_mean_ratings = self.compute_user_mean_ratings()
-        # replace nan with 0
-        self.rating_matrix = self.rating_matrix.fillna(0)    
+
         # a dict to save all the computed similarity score for all users
         self.all_similarity_score = dict.fromkeys(self.rating_matrix.columns, None)
+
+        if movies_data is not None:
+            self.movies_data = self.save_movies(movies_data)
+
+        # replace nan with 0
+        self.rating_matrix = self.rating_matrix.fillna(0)    
 
     def predict_rating(self, ) -> float:
         raise NotImplementedError
@@ -67,10 +78,9 @@ class CollaborativeFiltering(object):
         compute and save the mean rating for each user in the rating matrix
         """
         assert self.rating_matrix is not None, 'Rating matrix is None'
-        user_mean_ratings = np.nanmean(self.rating_matrix, axis = 1)
-        assert len(user_mean_ratings) == self.rating_matrix.shape[0]
 
-        return {userid:user_mean_ratings[userid - 1] for userid in np.arange(1, len(self.rating_matrix.index) + 1)}
+        user_mean_ratings =self.rating_matrix.mean(axis  =1)
+        return {userid:user_mean_ratings[userid] for userid in  self.rating_matrix.index}
 
     def pearson_correlation(self, a: list, b: list ,mean_a:float = None, mean_b:float = None) -> float:
         """
@@ -113,7 +123,7 @@ class UserBasedCF(CollaborativeFiltering):
 
     def __init__(self, data:pd.DataFrame, k_neighbors:int = 10,
                  rating_matrix_row:str = None, rating_matrix_column:str = None, 
-                 rating_matrix_value:str = None, movie_data:dict = None) -> None:
+                 rating_matrix_value:str = None, movies_data:dict = None) -> None:
         """
         User-based Collaborative filtering algorithm
         params:
@@ -124,8 +134,7 @@ class UserBasedCF(CollaborativeFiltering):
 
         """
         super().__init__(data, k_neighbors, rating_matrix_row, rating_matrix_column, 
-                rating_matrix_value)
-
+                rating_matrix_value, movies_data)
 
     def get_mutually_rated_items(self, user1, user2) -> dict:
         """
@@ -136,7 +145,7 @@ class UserBasedCF(CollaborativeFiltering):
         mutually_rated_items = np.intersect1d(user1_rated_items, user2_rated_items, assume_unique=True )
         return mutually_rated_items
 
-    def compute_similarity_score(self, target_user: int, metric:str) -> dict:
+    def compute_similarity_score(self, target_user: int, similarity_metric:str) -> dict:
         """
         compute the similar score between target_user and all other users
 
@@ -146,7 +155,7 @@ class UserBasedCF(CollaborativeFiltering):
 
         return: a dict, its keys are user ids, its values are the metric scores
         """
-        score_function = self.pearson_correlation if metric == 'Pearson' else self.cosine_similarity
+        score_function = self.pearson_correlation if similarity_metric == 'Pearson' else self.cosine_similarity
         # k closest users to the user_id at hand, w.r.t one specific item
         scores = dict.fromkeys(self.rating_matrix.index, 0)
         items_rated_by_target_user = self.get_rated_items(target_user)
@@ -160,7 +169,7 @@ class UserBasedCF(CollaborativeFiltering):
             if len(mutually_rated_items) == 0:
                 continue
             else:
-
+                
                 scores[user] = score_function(self.rating_matrix.loc[target_user, mutually_rated_items],
                                              self.rating_matrix.loc[user, mutually_rated_items],
                                              self.user_mean_ratings[target_user], self.user_mean_ratings[user] )    
@@ -199,13 +208,17 @@ class UserBasedCF(CollaborativeFiltering):
             if similarity_metric in self.all_similarity_score[target_user]:
                 scores = self.all_similarity_score[target_user][similarity_metric]
             else:
-                scores = self.compute_similarity_score(target_user = target_user, metric = similarity_metric)
+                logger.info(f'Computing {similarity_metric} similarity of the target user and other users...')
+                scores = self.compute_similarity_score(target_user = target_user, similarity_metric = similarity_metric)
                 # save the score to memory
                 self.all_similarity_score[target_user][similarity_metric] = scores
+                logger.info('Done.')
         else:
+            logger.info(f'Computing {similarity_metric} similarity of the target user and other users...')
             self.all_similarity_score[target_user] = {}
-            scores = self.compute_similarity_score(target_user = target_user, metric = similarity_metric)
+            scores = self.compute_similarity_score(target_user = target_user, similarity_metric = similarity_metric)
             self.all_similarity_score[target_user][similarity_metric] = scores
+            logger.info('Done.')
 
         # sort the scores according to its values
         sorted_scores = {k: v for k, v in sorted(scores.items(), key=lambda item: item[1], reverse=True)}
@@ -256,6 +269,31 @@ class UserBasedCF(CollaborativeFiltering):
 
         """
         assert similarity_metric in ['Pearson', 'Cosine'], "similarity_metric must be 'Pearson' or 'Cosine'"
+
+        predicted_rating = self.predict_ratings(target_user, similarity_metric, k_neighbors, similarity_threshold, mean_centered)
+
+        logger.info('Predict rating done. Recommending promising items')
+
+        if len(predicted_rating) > 1:
+            predicted_rating = {k: v for k, v in sorted(predicted_rating.items(), key=lambda item: item[1], reverse=True)}
+        
+        # filter out the items that have predicted rating < rating_threshold
+        recommending_items = {item:predicted_rating[item] for item in predicted_rating.keys() if predicted_rating[item] > rating_threshold}
+        if len(recommending_items) > num_items:
+           recommending_items = {item:predicted_rating[item] for item in list(recommending_items.keys())[:num_items] }
+           
+        logger.info(f'These are {num_items} promising items for the target user {target_user} ')
+        if self.movies_data is not None:
+            return {self.movies_data[item]:score for item, score in recommending_items.items()}
+        else:
+            return recommending_items
+
+    def predict_ratings(self, target_user:int, similarity_metric:str = 'Pearson', 
+                k_neighbors:int = None, similarity_threshold = 0.5,  mean_centered:bool = True, ) -> dict:
+        """
+        Predict ratings of the target user for all the items she did not rated
+        return: a dict {item:predicted_rating} for all item
+        """
         if k_neighbors is None:
             k_neighbors = self.k_neighbors
         rated_items = self.get_rated_items(target_user)
@@ -265,22 +303,15 @@ class UserBasedCF(CollaborativeFiltering):
             print('There is nothing left for this user')
             return []
 
+        logger.info('Start predict rating...')
         rating_predicted = {}
         for item in not_rated_items:
             rating_predicted[item] = self.predict_rating(target_user = target_user, target_item = item, k_neighbors = k_neighbors,
                                                         similarity_threshold = similarity_threshold, mean_centered = mean_centered,
                                                         similarity_metric=similarity_metric)
-        logging.info(rating_predicted)
-        if len(rating_predicted) > 1:
-            rating_predicted = {k: v for k, v in sorted(rating_predicted.items(), key=lambda item: item[1], reverse=True)}
-        
-        recommending_items = [x for x, rating in rating_predicted.items() if rating > rating_threshold]
-        if len(recommending_items) > num_items:
-            return recommending_items[:num_items]
-        else:
-            return recommending_items
-        
-    
+
+        return rating_predicted
+
 class ItemBasedCF(CollaborativeFiltering):
     def __init__(self, data:pd.DataFrame, k_neighbors:int= 10, rating_matrix_row:str=None,
                     rating_matrix_column:str = None, rating_matrix_value:str = None, movies_data = None ) -> None:
@@ -303,6 +334,7 @@ class ItemBasedCF(CollaborativeFiltering):
         # create the user-mean centered rating_matrix version of the raw rating_matrix
         logger.info('creating centered version of the rating matrix')
         self.centered_rating_matrix = self.get_centered_rating_matrix()
+
     def get_centered_rating_matrix(self) -> pd.DataFrame:
         """
         Centering the rating matrix by its row mean
@@ -328,6 +360,16 @@ class ItemBasedCF(CollaborativeFiltering):
         # user_row is a series, can only be indexed by its column name
         users  = [x for x in self.rating_matrix.index if item_col.loc[x] > 0]
         return users
+
+    def compute_item_mean_ratings(self, ) -> dict:
+        """
+        Compute the average rating for each item
+        """
+        self.rating_matrix = self.rating_matrix.replace(0, np.nan)
+        means = self.rating_matrix.mean(axis = 0)
+        assert len(means) == self.rating_matrix.shape[1], 'Some thing went wrong'
+        item_mean_ratings = {item: means[item ] for item in self.rating_matrix.columns}
+        return item_mean_ratings
 
     def compute_similarity_score(self, target_item:int, similarity_metric:str = 'AdjustedCosine' ) -> dict:
         """
@@ -358,9 +400,10 @@ class ItemBasedCF(CollaborativeFiltering):
                 if similarity_metric == 'AdjustedCosine':
                     scores[item] = self.adjusted_cosine(self.centered_rating_matrix.loc[mutually_rated_users, target_item],
                                              self.centered_rating_matrix.loc[mutually_rated_users, item] ) 
-                else:
+                elif similarity_metric == 'Pearson':
                     scores[item] = self.pearson_correlation(self.rating_matrix.loc[mutually_rated_users, target_item], 
-                                                            self.rating_matrix.loc[mutually_rated_users, item])
+                                                            self.rating_matrix.loc[mutually_rated_users, item], 
+                                                            self.item_mean_ratings[target_item], self.item_mean_ratings[item])
         return scores
 
     def predict_rating(
@@ -385,21 +428,23 @@ class ItemBasedCF(CollaborativeFiltering):
             k_neighbors = self.k_neighbors
 
         # retrieve or compute (if have to) similarity scores between target item and all other items
-        
         if self.all_similarity_score[target_item] is not None:
             if similarity_metric in self.all_similarity_score[target_item].keys():
+                
                 scores = self.all_similarity_score[target_item][similarity_metric]
+                # logger.info(f'Retrieving similarity score {len(scores)}')
             else:
-                logger.info('Computing similarity score')
+                logger.info(f'Computing {similarity_metric} similarity of the target item and other items...')
                 scores = self.compute_similarity_score(target_item = target_item, similarity_metric = similarity_metric)
                 # save the score to memory
                 self.all_similarity_score[target_item][similarity_metric] = scores
+                logger.info('Done.')
         else:
+            logger.info(f'Computing {similarity_metric} similarity of the target item and other items...')
             self.all_similarity_score[target_item] = {}
-            logger.info('Computing similarity score of the target item and other items')
             scores = self.compute_similarity_score(target_item = target_item, similarity_metric = similarity_metric)
             self.all_similarity_score[target_item][similarity_metric] = scores
-            logger.info('Done')
+            logger.info('Done.')
 
         # start finding neighbors, an item is only accepted as a neighbor of the target item
         # for the target user if that user has rated that item, and the similartity score is higher
@@ -414,7 +459,6 @@ class ItemBasedCF(CollaborativeFiltering):
         if len(neighbors) == 0:
             return predicted
         elif len(neighbors) == 1:
-            # if there is only one neighbor, return the rating of that neighbor for the target item
             return self.rating_matrix.loc[target_user, target_item]
         elif len(neighbors) < k_neighbors:
             # average over raw rating, no matter it is AdjustedCosine or Pearson
@@ -423,11 +467,41 @@ class ItemBasedCF(CollaborativeFiltering):
             sorted_neighbors = {k: v for k, v in sorted(neighbors.items(), key=lambda item: item[1], reverse=True)}
             neighbors_items = list(sorted_neighbors.keys())[:k_neighbors]
             neighbors = {item:sorted_neighbors[item] for item in neighbors_items }
-            predicted = np.sum([score*self.rating_matrix.loc[target_user, item] for item, score in neighbors.items() ])/np.sum(list(neighbors.values()))
+            predicted = np.sum([score*self.rating_matrix.loc[target_user, item] for item, score in neighbors.items()])/np.sum(list(neighbors.values()))
         return predicted
 
+
+    def predict_ratings(self, target_item:int, similarity_metric:str = 'AdjustedCosine',
+                  k_neighbors:int = 10, similarity_threshold = 0.5, ) -> dict:
+        """
+        Predict ratings of all the users who did not rate the target item for the target item.
+        return a dict {user:predicted_rating}
+        """
+        if k_neighbors is None:
+            k_neighbors = self.k_neighbors
+
+        assert similarity_metric in ['AdjustedCosine', 'Pearson'], "similarity_metric can only be 'AdjustedCosine' or 'Pearson'"
+        # compute item mean rating if the similarity metric is Pearson
+        if similarity_metric == 'Pearson':
+            self.item_mean_ratings = self.compute_item_mean_ratings()            
+        # We only consider the users that did not rate the target item
+        users_not_rated_target_item = list(set(self.rating_matrix.index) - set(self.get_user_rated_item(target_item)) )
+        # for each user that did not rate the target_item, predict the rating of that user to the target item
+        logger.info('Start predict rating...')
+        predicted_rating = dict.fromkeys(users_not_rated_target_item, 0)
+
+        for user in users_not_rated_target_item:
+            predicted_rating[user] = self.predict_rating(user, target_item, k_neighbors, similarity_threshold, similarity_metric )
+        logger.info('Predict rating done. Recommending promising users')
+
+        # sort the predicted rating
+        predicted_rating =  {k: v for k, v in sorted(predicted_rating.items(), key=lambda item: item[1], reverse=True)}
+        # filter out the predicted rating that < rating_threshold
+
+        return predicted_rating
+
     def recommend(self, target_item:int, num_users:int, similarity_metric:str = 'AdjustedCosine',
-                  k_neighbors:int = 10, similarity_threshold = 0.5, rating_threshold = 3 ) -> dict:
+                  k_neighbors:int = 10, similarity_threshold = 0.5, rating_threshold = 4 ) -> dict:
         """
         Find k most promising users for the target item
 
@@ -451,25 +525,20 @@ class ItemBasedCF(CollaborativeFiltering):
             3. Sort the previous saved dict, then take out k users that have the highest predicted rating. 
                 Those users are then considered the most promising users. 
         """
-        if k_neighbors is None:
-            k_neighbors = self.k_neighbors
 
-        users_not_rated_target_item = list(set(self.rating_matrix.index) - set(self.get_user_rated_item(target_item)) )
-        # for each user that did not rate the target_item, predict the rating of that user to the target item
-        predicted_rating = dict.fromkeys(users_not_rated_target_item, 0)
-
-        logger.info('Predicting ratings')
-        for user in users_not_rated_target_item:
-            predicted_rating[user] = self.predict_rating(user, target_item, k_neighbors, similarity_threshold, similarity_metric )
-        logger.info('Done. Recommending promising users')
-
-        predicted_rating =  {k: v for k, v in sorted(predicted_rating.items(), key=lambda item: item[1], reverse=True)}
+        predicted_rating = self.predict_ratings(target_item, similarity_metric, k_neighbors, similarity_threshold)
+        
+        # filter out the predicted rating that < rating_threshold
         predicted_rating = {user:rating for user, rating in predicted_rating.items() if rating > rating_threshold}
 
-        if len(predicted_rating) < num_users:
+        if len(predicted_rating) > num_users:
+            predicted_rating = {user:predicted_rating[user] for user in list(predicted_rating.keys())[:num_users] }
+
+        logger.info(f'These are {num_users} promising users for the target item {target_item}')
+        if self.movies_data is None:
             return predicted_rating
         else:
-            return  {item:predicted_rating[item] for item in list(predicted_rating.keys())[:num_users]}
+            return {user:predicted_rating[user] for user in list(predicted_rating.keys())[:num_users] }
 
 if __name__ == '__main__':
     data_dict = {'userID': [1,1,1,1,1, 2,2,2,2,2, 3,3,3,3,3, 4,4,4,4,4], 
@@ -478,4 +547,4 @@ if __name__ == '__main__':
     data = pd.DataFrame.from_dict(data_dict)
     recommender = ItemBasedCF(data, 2, 'userID', 'movieID', 'rating')
     # print(recommender.rating_matrix)
-    print(recommender.recommend(4, 1, 'AdjustedCosine', 1))
+    print(recommender.recommend(4, 1, 'Pearson', 1))
