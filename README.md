@@ -7,4 +7,4 @@ Memory-based Collaborative filtering in rsfromscratch/CollaborativeFiltering/Col
 
 Example usage in notebooks
 
-code will appear in 2021/10/19
+**code will appear in 2021/10/19**
