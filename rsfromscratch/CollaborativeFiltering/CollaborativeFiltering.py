@@ -458,9 +458,10 @@ class ItemBasedCF(CollaborativeFiltering):
 
 
         rated_items_by_target_user = self.get_rated_items(target_user)
+        # neighbor items are items that have rated by the target user AND have similarity score > similarity threshold
         neighbors = {item:scores[item] for item in rated_items_by_target_user if scores[item] > similarity_threshold }
 
-        predicted = 0
+        predicted = -1
         if len(neighbors) == 0:
             return predicted
         elif len(neighbors) == 1:
@@ -469,6 +470,7 @@ class ItemBasedCF(CollaborativeFiltering):
             # average over raw rating, no matter it is AdjustedCosine or Pearson
             predicted = np.sum([score*self.rating_matrix.loc[target_user, item] for item, score in neighbors.items() ])/np.sum(list(neighbors.values()))
         else:
+            # there are more acceptable neighbor items than we need, so we will choose the k_neighbors with the largest similarity score.
             sorted_neighbors = {k: v for k, v in sorted(neighbors.items(), key=lambda item: item[1], reverse=True)}
             neighbors_items = list(sorted_neighbors.keys())[:k_neighbors]
             neighbors = {item:sorted_neighbors[item] for item in neighbors_items }
@@ -489,7 +491,7 @@ class ItemBasedCF(CollaborativeFiltering):
         # compute item mean rating if the similarity metric is Pearson
         if similarity_metric == 'Pearson':
             self.item_mean_ratings = self.compute_item_mean_ratings()            
-        # We only consider the users that did not rate the target item
+        # We only consider the users who did not rate the target item
         users_not_rated_target_item = list(set(self.rating_matrix.index) - set(self.get_user_rated_item(target_item)) )
         # for each user that did not rate the target_item, predict the rating of that user to the target item
         logger.info('Start predict rating...')
