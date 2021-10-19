@@ -10,4 +10,4 @@ Example usage in notebooks
 
 I am a human, I made mistakes, I've done my best but don't consider my code as ground true, feel free to change it if you need to.
 
-**code will appear in 2021/10/19**
+**code will appear after 2021/10/19**
