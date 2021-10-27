@@ -7,6 +7,3 @@
 * Memory-based Collaborative filtering in rsfromscratch/CollaborativeFiltering/CollaborativeFiltering.py
 
 * Example usage in notebooks
- 
-I am a human, I made mistakes, I've done my best but don't consider my code as ground true, feel free to change it if you need to.
-
