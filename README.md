@@ -5,6 +5,6 @@
 
 * Example usage in notebooks
 
-* available algorithm:
+* Available algorithms:
   - User-based/Item-based Collaborative filtering: chapter 2.3, page 33.
   - Content-based algorithm.
